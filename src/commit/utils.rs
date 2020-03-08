@@ -1,9 +1,14 @@
+use crate::commit::delta::Delta;
+use crate::commit::diff_line::{DiffLine, Origin};
 use crate::commit::file_stat::FileStat;
 use crate::commit::status::Status;
 use crate::commit::user::User;
 use crate::commit::Commit;
+use crate::process::exit_status::ExitStatus::StateError;
 use chrono::{Local, TimeZone};
 use git2::{DiffFindOptions, DiffOptions, Error, Repository};
+use std::cmp::max;
+use std::sync::Mutex;
 
 /// Load commit information from a commit hash.
 pub(super) fn load_commit_state(hash: &str) -> Result<Commit, Error> {
@@ -31,7 +36,10 @@ pub(super) fn load_commit_state(hash: &str) -> Result<Commit, Error> {
 		.show_unmodified(true)
 		.ignore_filemode(false)
 		.include_typechange_trees(true)
-		.include_typechange(true);
+		.include_typechange(true)
+		.minimal(true)
+		.indent_heuristic(true)
+		.context_lines(3);
 
 	let mut diff_find_options = DiffFindOptions::new();
 	let diff_find_options = diff_find_options
@@ -53,25 +61,91 @@ pub(super) fn load_commit_state(hash: &str) -> Result<Commit, Error> {
 
 			diff.find_similar(Some(diff_find_options))?;
 
-			// filter unmodified isn't being correctly removed
-			Some(
-				diff.deltas()
-					.filter(|d| d.status() != git2::Delta::Unmodified)
-					.map(|d| {
-						FileStat::new(
-							d.old_file()
-								.path()
-								.map(|p| String::from(p.to_str().unwrap()))
-								.unwrap_or_else(|| String::from("unknown")),
-							d.new_file()
-								.path()
-								.map(|p| String::from(p.to_str().unwrap()))
-								.unwrap_or_else(|| String::from("unknown")),
-							Status::new_from_git_delta(d.status()),
-						)
-					})
-					.collect::<Vec<FileStat>>(),
+			let mut stats: Vec<FileStat> = vec![];
+			let mut file_stat = Mutex::new(FileStat::new());
+			let mut delta = Mutex::new(Delta::new());
+
+			// TODO trace file mode change and binary files
+			diff.foreach(
+				&mut |diffDelta, _| {
+					// ignore unmodified files
+					if diffDelta.status() == git2::Delta::Unmodified {
+						return true;
+					}
+
+					eprintln!(
+						"{}",
+						diffDelta
+							.old_file()
+							.path()
+							.map(|p| String::from(p.to_str().unwrap()))
+							.unwrap_or_else(|| String::from("unknown")),
+					);
+
+					let mut fs_locked = file_stat.lock().unwrap();
+					stats.push(FileStat::new_from_existing(&fs_locked));
+					fs_locked.reset(
+						diffDelta
+							.old_file()
+							.path()
+							.map(|p| String::from(p.to_str().unwrap()))
+							.unwrap_or_else(|| String::from("unknown")),
+						diffDelta
+							.new_file()
+							.path()
+							.map(|p| String::from(p.to_str().unwrap()))
+							.unwrap_or_else(|| String::from("unknown")),
+						Status::new_from_git_delta(diffDelta.status()),
+					);
+					true
+				},
+				None,
+				Some(&mut |_, diffHunk| {
+					let mut delta_locked = delta.lock().unwrap();
+					if delta_locked.lines().len()
+					file_stat.lock().unwrap().add_delta(&delta_locked);
+					eprintln!(
+						"{}, {}",
+						file_stat.lock().unwrap().get_from_name(),
+						delta_locked.context()
+					);
+
+					delta_locked.reset();
+					delta_locked.set_context(
+						// extra context from header
+						std::str::from_utf8(diffHunk.header())
+							.unwrap()
+							.split("@")
+							.last()
+							.unwrap_or("")
+							.trim(),
+						diffHunk.old_start(),
+						diffHunk.new_start(),
+						diffHunk.old_lines(),
+						diffHunk.new_lines(),
+					);
+
+					true
+				}),
+				Some(&mut |_, _, dl| {
+					delta.lock().unwrap().add_line(DiffLine::new(
+						Origin::from_chr(dl.origin()),
+						std::str::from_utf8(dl.content()).unwrap(),
+						dl.old_lineno(),
+						dl.new_lineno(),
+						dl.origin() == '=' || dl.origin() == '>' || dl.origin() == '<',
+					));
+					true
+				}),
 			)
+			.unwrap();
+
+			let mut fs_locked = file_stat.lock().unwrap();
+			fs_locked.add_delta(&delta.lock().unwrap());
+			stats.push(FileStat::new_from_existing(&fs_locked));
+			// first element is always an empty delta, so remove it
+			stats.remove(0);
+			Some(stats)
 		},
 	};
 

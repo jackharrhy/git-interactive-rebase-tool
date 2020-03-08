@@ -1,5 +1,7 @@
+use crate::commit::diff_line::{DiffLine, Origin};
 use crate::commit::status::Status;
 use crate::display::display_color::DisplayColor;
+use crate::list::line::Line;
 use crate::view::line_segment::LineSegment;
 
 pub(super) fn get_file_stat_color(status: &Status) -> DisplayColor {
@@ -83,4 +85,46 @@ pub(super) fn get_stat_item_segments(
 			]
 		},
 	}
+}
+
+pub(super) fn get_diff_line_segments(
+	diff_line: &DiffLine,
+	old_largest_line_number_length: usize,
+	new_largest_line_number_length: usize,
+) -> Vec<LineSegment>
+{
+	let mut line_segments = vec![];
+
+	line_segments.push(LineSegment::new_with_color(
+		diff_line.origin().to_str(),
+		match diff_line.origin() {
+			Origin::Addition => DisplayColor::DiffAddColor,
+			Origin::Deletion => DisplayColor::DiffRemoveColor,
+			Origin::Context => DisplayColor::Normal,
+		},
+	));
+
+	line_segments.push(match diff_line.old_line_number() {
+		Some(line_number) => {
+			LineSegment::new(format!("{:<width$}", line_number, width = old_largest_line_number_length).as_str())
+		},
+		None => LineSegment::new(" ".repeat(old_largest_line_number_length).as_str()),
+	});
+	line_segments.push(LineSegment::new("   "));
+
+	line_segments.push(match diff_line.new_line_number() {
+		Some(line_number) => {
+			LineSegment::new(format!("{:<width$}", line_number, width = new_largest_line_number_length).as_str())
+		},
+		None => LineSegment::new(" ".repeat(new_largest_line_number_length).as_str()),
+	});
+	// TODO only show leading tabs/spaces
+	// TODO configure show whitespace, true, false, leading, trailing, leading|trailing
+	// TODO configure character to use for tab and space
+	// TODO read and allow configuration of tab width
+	line_segments.push(LineSegment::new(
+		format!("|  {}", diff_line.line().replace('\n', "").replace("\t", "→")).as_str(),
+	));
+
+	line_segments
 }

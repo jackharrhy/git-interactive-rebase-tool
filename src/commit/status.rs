@@ -1,6 +1,6 @@
 use git2::Delta;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Status {
 	/// Entry does not exist in old version
 	Added,

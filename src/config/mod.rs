@@ -36,6 +36,7 @@ pub(crate) struct Config {
 	pub(crate) input_open_in_external_editor: String,
 	pub(crate) input_rebase: String,
 	pub(crate) input_show_commit: String,
+	pub(crate) input_show_diff: String,
 	pub(crate) input_toggle_visual_mode: String,
 }
 
@@ -105,6 +106,7 @@ impl Config {
 			)?,
 			input_rebase: get_input(&git_config, "interactive-rebase-tool.inputRebase", "w")?,
 			input_show_commit: get_input(&git_config, "interactive-rebase-tool.inputShowCommit", "c")?,
+			input_show_diff: get_input(&git_config, "interactive-rebase-tool.inputShowDiff", "d")?,
 			input_toggle_visual_mode: get_input(&git_config, "interactive-rebase-tool.inputToggleVisualMode", "v")?,
 		})
 	}

@@ -1,14 +1,17 @@
+mod delta;
+pub(crate) mod diff_line;
 mod file_stat;
 pub(crate) mod status;
 mod user;
 mod utils;
 
+use crate::commit::delta::Delta;
 use crate::commit::file_stat::FileStat;
 use crate::commit::user::User;
 use crate::commit::utils::load_commit_state;
 use chrono::{DateTime, Local};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) struct Commit {
 	author: User,
 	body: Option<String>,

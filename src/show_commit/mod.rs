@@ -1,10 +1,11 @@
 mod data;
+mod show_commit_state;
 mod util;
 
 use crate::commit::Commit;
 use crate::display::display_color::DisplayColor;
 use crate::git_interactive::GitInteractive;
-use crate::input::input_handler::InputHandler;
+use crate::input::input_handler::{InputHandler, InputMode};
 use crate::input::Input;
 use crate::process::handle_input_result::{HandleInputResult, HandleInputResultBuilder};
 use crate::process::process_module::ProcessModule;
@@ -12,16 +13,19 @@ use crate::process::process_result::{ProcessResult, ProcessResultBuilder};
 use crate::process::state::State;
 use crate::scroll::scroll_position::ScrollPosition;
 use crate::show_commit::data::Data;
+use crate::show_commit::show_commit_state::ShowCommitState;
 use crate::view::View;
 
 pub(crate) struct ShowCommit {
 	commit: Option<Result<Commit, String>>,
 	data: Data,
 	scroll_position: ScrollPosition,
+	state: ShowCommitState,
 }
 
 impl ProcessModule for ShowCommit {
 	fn activate(&mut self, _state: State, git_interactive: &GitInteractive) {
+		self.state = ShowCommitState::Overview;
 		self.scroll_position.reset();
 		self.commit = Some(git_interactive.load_commit_stats());
 	}
@@ -36,7 +40,9 @@ impl ProcessModule for ShowCommit {
 
 		if let Some(commit) = &self.commit {
 			match commit {
-				Ok(c) => self.data.update(&c, view_width, view_height),
+				Ok(c) => {
+					self.data.update(&self.state, &c, view_width, view_height);
+				},
 				Err(e) => {
 					result = result.error(e.as_str(), State::List(false));
 					self.data.reset()
@@ -56,7 +62,7 @@ impl ProcessModule for ShowCommit {
 	{
 		let (view_width, view_height) = view.get_view_size();
 
-		let input = input_handler.get_input();
+		let input = input_handler.get_input(InputMode::ShowCommit);
 		let mut result = HandleInputResultBuilder::new(input);
 		match input {
 			Input::MoveCursorLeft => {
@@ -79,8 +85,21 @@ impl ProcessModule for ShowCommit {
 				self.scroll_position
 					.scroll_up(view_height, self.get_commit_stats_length());
 			},
+			Input::ShowDiff => {
+				self.state = if self.state == ShowCommitState::Diff {
+					ShowCommitState::Overview
+				}
+				else {
+					ShowCommitState::Diff
+				}
+			},
 			_ => {
-				result = result.state(State::List(false));
+				if self.state == ShowCommitState::Diff {
+					self.state = ShowCommitState::Overview;
+				}
+				else {
+					result = result.state(State::List(false));
+				}
 			},
 		}
 		result.build()
@@ -90,25 +109,42 @@ impl ProcessModule for ShowCommit {
 		let (_, window_height) = view.get_view_size();
 		let view_height = window_height - 2;
 
-		view.draw_title(false);
+		match self.state {
+			ShowCommitState::Overview => {
+				match self.commit {
+					None => {
+						view.draw_error("Not commit data to show");
+						return;
+					},
+					Some(_) => {
+						view.draw_title(false);
 
-		match &self.commit {
-			None => {
-				view.draw_error("Not commit data to show");
-				return;
+						view.draw_view_lines(
+							self.data.get_lines(),
+							self.scroll_position.get_top_position(),
+							self.scroll_position.get_left_position(),
+							view_height,
+						);
+
+						view.set_color(DisplayColor::IndicatorColor, false);
+						view.draw_str("Any key to close");
+					},
+				};
 			},
-			Some(c) => c.as_ref().unwrap(), // safe unwrap
-		};
+			ShowCommitState::Diff => {
+				view.draw_title(false);
 
-		view.draw_view_lines(
-			self.data.get_lines(),
-			self.scroll_position.get_top_position(),
-			self.scroll_position.get_left_position(),
-			view_height,
-		);
+				view.draw_view_lines(
+					self.data.get_lines(),
+					self.scroll_position.get_top_position(),
+					self.scroll_position.get_left_position(),
+					view_height,
+				);
 
-		view.set_color(DisplayColor::IndicatorColor, false);
-		view.draw_str("Any key to close");
+				view.set_color(DisplayColor::IndicatorColor, false);
+				view.draw_str("Any key to close");
+			},
+		}
 	}
 }
 
@@ -118,6 +154,7 @@ impl ShowCommit {
 			commit: None,
 			data: Data::new(),
 			scroll_position: ScrollPosition::new(3, 6, 3),
+			state: ShowCommitState::Overview,
 		}
 	}
 
